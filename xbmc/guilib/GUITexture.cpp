@@ -365,7 +365,24 @@ bool CGUITexture::AllocResources()
     if (m_isAllocated != NORMAL)
     { // use our large image background loader
       CTextureArray texture;
-      if (CServiceBroker::GetGUI()->GetLargeTextureManager().GetImage(m_info.filename, texture, !IsAllocated(), m_use_cache))
+
+      // this still doesn't account for "Set GUI resolution limit"
+      // Def slower than 720p all around for pi3 so does still wind up in the GPU
+      unsigned int usewidth =
+          m_width ? m_width / CServiceBroker::GetWinSystem()->GetGfxContext().GetGUIScaleX() * 1.05f
+          : m_aspect.ratio == CAspectRatio::ASPECT_RATIO::AR_CENTER ? 0
+                                                                    : 720;
+      unsigned int useheight =
+          m_height
+              ? m_height / CServiceBroker::GetWinSystem()->GetGfxContext().GetGUIScaleY() * 1.05f
+          : m_aspect.ratio == CAspectRatio::ASPECT_RATIO::AR_CENTER ? 0
+                                                                    : 720;
+      bool limitSingleDimension = m_aspect.ratio == CAspectRatio::ASPECT_RATIO::AR_SCALE ||
+                                  m_aspect.ratio == CAspectRatio::ASPECT_RATIO::AR_STRETCH;
+      // 'stretch' could also be stretched during this swscale, but for now I'll leave it.
+      if (CServiceBroker::GetGUI()->GetLargeTextureManager().GetImage(
+              m_info.filename, texture, !IsAllocated(), m_use_cache, useheight, usewidth,
+              limitSingleDimension))
       {
         m_isAllocated = LARGE;
 
@@ -507,7 +524,21 @@ bool CGUITexture::CalculateSize()
 void CGUITexture::FreeResources(bool immediately /* = false */)
 {
   if (m_isAllocated == LARGE || m_isAllocated == LARGE_FAILED)
-    CServiceBroker::GetGUI()->GetLargeTextureManager().ReleaseImage(m_info.filename, immediately || (m_isAllocated == LARGE_FAILED));
+  {
+    unsigned int usewidth =
+        m_width ? m_width / CServiceBroker::GetWinSystem()->GetGfxContext().GetGUIScaleX() * 1.05f
+        : m_aspect.ratio == CAspectRatio::ASPECT_RATIO::AR_CENTER ? 0
+                                                                  : 720;
+    unsigned int useheight =
+        m_height ? m_height / CServiceBroker::GetWinSystem()->GetGfxContext().GetGUIScaleY() * 1.05f
+        : m_aspect.ratio == CAspectRatio::ASPECT_RATIO::AR_CENTER ? 0
+                                                                  : 720;
+    bool limitSingleDimension = m_aspect.ratio == CAspectRatio::ASPECT_RATIO::AR_SCALE ||
+                                m_aspect.ratio == CAspectRatio::ASPECT_RATIO::AR_STRETCH;
+    CServiceBroker::GetGUI()->GetLargeTextureManager().ReleaseImage(
+        m_info.filename, usewidth, useheight, limitSingleDimension,
+        immediately || (m_isAllocated == LARGE_FAILED));
+  }
   else if (m_isAllocated == NORMAL && m_texture.size())
     CServiceBroker::GetGUI()->GetTextureManager().ReleaseTexture(m_info.filename, immediately);
 

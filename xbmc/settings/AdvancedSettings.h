@@ -228,6 +228,7 @@ class CAdvancedSettings : public ISettingCallback, public ISettingsHandler
     unsigned int m_fanartRes; ///< \brief the maximal resolution to cache fanart at (assumes 16x9)
     unsigned int m_imageRes;  ///< \brief the maximal resolution to cache images at (assumes 16x9)
     CPictureScalingAlgorithm::Algorithm m_imageScalingAlgorithm;
+    CPictureScalingAlgorithm::Algorithm m_imageStepScalingAlgorithm;
     unsigned int
         m_imageQualityJpeg; ///< \brief the stored jpeg quality the lower the better (default: 4)
 
@@ -375,6 +376,7 @@ class CAdvancedSettings : public ISettingCallback, public ISettingsHandler
     std::string m_userAgent;
     uint32_t m_nfsTimeout;
     int m_nfsRetries;
+    bool m_guiSWScaleImages{false};
 
   private:
     void Initialize();

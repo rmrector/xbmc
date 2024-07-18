@@ -44,6 +44,15 @@ public:
     uint32_t &dest_width, uint32_t &dest_height, uint8_t* &result, size_t& result_size,
     CPictureScalingAlgorithm::Algorithm scalingAlgorithm = CPictureScalingAlgorithm::NoAlgorithm);
 
+  static std::unique_ptr<CTexture> ResizeTextureDown(std::unique_ptr<CTexture> source,
+                                                     unsigned int requested_width,
+                                                     unsigned int requested_height,
+                                                     bool limitSingleDimension);
+  static void GetScaleWide(unsigned int width,
+                           unsigned int height,
+                           unsigned int& out_width,
+                           unsigned int& out_height);
+
   /*! \brief Cache a texture, resizing, rotating and flipping as needed, and saving as a JPG or PNG
    \param texture a pointer to a CTexture
    \param dest_width [in/out] maximum width in pixels of cached version - replaced with actual cached width

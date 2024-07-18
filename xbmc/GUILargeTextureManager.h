@@ -30,7 +30,11 @@ class CTexture;
 class CImageLoader : public CJob
 {
 public:
-  CImageLoader(const std::string &path, const bool useCache);
+  CImageLoader(const std::string& path,
+               const bool useCache,
+               unsigned int height,
+               unsigned int width,
+               bool limitSingleDimension);
   ~CImageLoader() override;
 
   /*!
@@ -41,6 +45,9 @@ public:
   bool          m_use_cache; ///< Whether or not to use any caching with this image
   std::string    m_path; ///< path of image to load
   std::unique_ptr<CTexture> m_texture; ///< Texture object to load the image into \sa CTexture.
+  unsigned int height;
+  unsigned int width;
+  bool limitSingleDimension;
 };
 
 /*!
@@ -81,7 +88,13 @@ public:
    \return true if the image exists, else false.
    \sa CGUITextureArray and CGUITexture
    */
-  bool GetImage(const std::string &path, CTextureArray &texture, bool firstRequest, bool useCache = true);
+  bool GetImage(const std::string& path,
+                CTextureArray& texture,
+                bool firstRequest,
+                bool useCache,
+                unsigned int height,
+                unsigned int width,
+                bool limitSingleDimension);
 
   /*!
    \brief Request a texture to be unloaded.
@@ -94,7 +107,11 @@ public:
    \param immediately if set true the image is immediately unloaded once its reference count reaches zero
                       rather than being unloaded after a delay.
    */
-  void ReleaseImage(const std::string &path, bool immediately = false);
+  void ReleaseImage(const std::string& path,
+                    unsigned int height,
+                    unsigned int width,
+                    bool limitSingleDimension,
+                    bool immediately = false);
 
   /*!
    \brief Cleanup images that are no longer in use.
@@ -111,7 +128,10 @@ private:
   class CLargeTexture
   {
   public:
-    explicit CLargeTexture(const std::string &path);
+    explicit CLargeTexture(const std::string& path,
+                           unsigned int width,
+                           unsigned int height,
+                           bool limitSingleDimension);
     virtual ~CLargeTexture();
 
     void AddRef();
@@ -121,6 +141,10 @@ private:
 
     const std::string& GetPath() const { return m_path; }
     const CTextureArray& GetTexture() const { return m_texture; }
+    bool IsSameTextureRequest(const std::string& path,
+                              unsigned int height,
+                              unsigned int width,
+                              bool limitSingleDimension) const;
 
   private:
     static const unsigned int TIME_TO_DELETE = 2000;
@@ -129,9 +153,16 @@ private:
     std::string m_path;
     CTextureArray m_texture;
     unsigned int m_timeToDelete;
+    unsigned int m_height;
+    unsigned int m_width;
+    bool m_limitSingleDimension;
   };
 
-  void QueueImage(const std::string &path, bool useCache = true);
+  void QueueImage(const std::string& path,
+                  bool useCache,
+                  unsigned int height,
+                  unsigned int width,
+                  bool limitSingleDimension);
 
   std::vector< std::pair<unsigned int, CLargeTexture *> > m_queued;
   std::vector<CLargeTexture *> m_allocated;

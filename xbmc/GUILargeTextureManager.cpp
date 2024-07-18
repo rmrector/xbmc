@@ -13,6 +13,7 @@
 #include "commons/ilog.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/Texture.h"
+#include "pictures/Picture.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/SettingsComponent.h"
 #include "utils/JobManager.h"
@@ -26,8 +27,16 @@
 #include <exception>
 #include <mutex>
 
-CImageLoader::CImageLoader(const std::string& path, const bool useCache)
-  : m_path(path), m_texture(nullptr)
+CImageLoader::CImageLoader(const std::string& path,
+                           const bool useCache,
+                           unsigned int height,
+                           unsigned int width,
+                           bool limitSingleDimension)
+  : m_path(path),
+    m_texture(nullptr),
+    height(height),
+    width(width),
+    limitSingleDimension(limitSingleDimension)
 {
   m_use_cache = useCache;
 }
@@ -64,13 +73,32 @@ bool CImageLoader::DoWork()
 
     if (m_texture)
     {
+      if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiSWScaleImages)
+      {
+        auto old_height = m_texture->GetHeight();
+        auto old_width = m_texture->GetWidth();
+        auto start = std::chrono::steady_clock::now();
+        m_texture =
+            CPicture::ResizeTextureDown(std::move(m_texture), width, height, limitSingleDimension);
+        auto end = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+        if (m_texture && duration.count() > 100)
+        {
+          CLog::LogF(LOGDEBUG, "{} ms to resize {}x{} image to {}x{} - {}x{} requested",
+                     duration.count(), old_width, old_height, m_texture->GetWidth(),
+                     m_texture->GetHeight(), width, height);
+        }
+      }
+
       if (needsChecking)
         CServiceBroker::GetTextureCache()->BackgroundCacheImage(texturePath);
 
       if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAsyncTextureUpload)
         m_texture->LoadToGPUAsync();
 
-      return true;
+      if (m_texture)
+        return true;
     }
 
     // Fallthrough on failure:
@@ -86,14 +114,38 @@ bool CImageLoader::DoWork()
   if (!m_texture)
     return false;
 
+  if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiSWScaleImages)
+  {
+    auto old_height = m_texture->GetHeight();
+    auto old_width = m_texture->GetWidth();
+    auto start = std::chrono::steady_clock::now();
+    m_texture =
+        CPicture::ResizeTextureDown(std::move(m_texture), width, height, limitSingleDimension);
+    auto end = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    if (!m_texture)
+      return false;
+
+    if (duration.count() > 100)
+    {
+      CLog::LogF(LOGDEBUG, "{} ms to resize {}x{} image to {}x{} - {}x{} requested",
+                 duration.count(), old_width, old_height, m_texture->GetWidth(),
+                 m_texture->GetHeight(), width, height);
+    }
+  }
+
   if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAsyncTextureUpload)
     m_texture->LoadToGPUAsync();
 
   return true;
 }
 
-CGUILargeTextureManager::CLargeTexture::CLargeTexture(const std::string &path):
-  m_path(path)
+CGUILargeTextureManager::CLargeTexture::CLargeTexture(const std::string& path,
+                                                      unsigned int width,
+                                                      unsigned int height,
+                                                      bool limitSingleDimension)
+  : m_path(path), m_width(width), m_height(height), m_limitSingleDimension(limitSingleDimension)
 {
   m_refCount = 1;
   m_timeToDelete = 0;
@@ -146,6 +198,15 @@ void CGUILargeTextureManager::CLargeTexture::SetTexture(std::unique_ptr<CTexture
   }
 }
 
+bool CGUILargeTextureManager::CLargeTexture::IsSameTextureRequest(const std::string& path,
+                                                                  unsigned int width,
+                                                                  unsigned int height,
+                                                                  bool limitSingleDimension) const
+{
+  return path == m_path && height == m_height && width == m_width &&
+         limitSingleDimension == m_limitSingleDimension;
+}
+
 CGUILargeTextureManager::CGUILargeTextureManager() = default;
 
 CGUILargeTextureManager::~CGUILargeTextureManager() = default;
@@ -167,13 +228,19 @@ void CGUILargeTextureManager::CleanupUnusedImages(bool immediately)
 
 // if available, increment reference count, and return the image.
 // else, add to the queue list if appropriate.
-bool CGUILargeTextureManager::GetImage(const std::string &path, CTextureArray &texture, bool firstRequest, const bool useCache)
+bool CGUILargeTextureManager::GetImage(const std::string& path,
+                                       CTextureArray& texture,
+                                       bool firstRequest,
+                                       const bool useCache,
+                                       unsigned int height,
+                                       unsigned int width,
+                                       bool limitSingleDimension)
 {
   std::unique_lock<CCriticalSection> lock(m_listSection);
   for (listIterator it = m_allocated.begin(); it != m_allocated.end(); ++it)
   {
     CLargeTexture *image = *it;
-    if (image->GetPath() == path)
+    if (image->IsSameTextureRequest(path, width, height, limitSingleDimension))
     {
       if (firstRequest)
         image->AddRef();
@@ -183,18 +250,22 @@ bool CGUILargeTextureManager::GetImage(const std::string &path, CTextureArray &t
   }
 
   if (firstRequest)
-    QueueImage(path, useCache);
+    QueueImage(path, useCache, height, width, limitSingleDimension);
 
   return true;
 }
 
-void CGUILargeTextureManager::ReleaseImage(const std::string &path, bool immediately)
+void CGUILargeTextureManager::ReleaseImage(const std::string& path,
+                                           unsigned int width,
+                                           unsigned int height,
+                                           bool limitSingleDimension,
+                                           bool immediately)
 {
   std::unique_lock<CCriticalSection> lock(m_listSection);
   for (listIterator it = m_allocated.begin(); it != m_allocated.end(); ++it)
   {
-    CLargeTexture *image = *it;
-    if (image->GetPath() == path)
+    CLargeTexture* image = *it;
+    if (image->IsSameTextureRequest(path, width, height, limitSingleDimension))
     {
       if (image->DecrRef(immediately) && immediately)
         m_allocated.erase(it);
@@ -216,7 +287,11 @@ void CGUILargeTextureManager::ReleaseImage(const std::string &path, bool immedia
 }
 
 // queue the image, and start the background loader if necessary
-void CGUILargeTextureManager::QueueImage(const std::string &path, bool useCache)
+void CGUILargeTextureManager::QueueImage(const std::string& path,
+                                         bool useCache,
+                                         unsigned int height,
+                                         unsigned int width,
+                                         bool limitSingleDimension)
 {
   if (path.empty())
     return;
@@ -225,7 +300,7 @@ void CGUILargeTextureManager::QueueImage(const std::string &path, bool useCache)
   for (queueIterator it = m_queued.begin(); it != m_queued.end(); ++it)
   {
     CLargeTexture *image = it->second;
-    if (image->GetPath() == path)
+    if (image->IsSameTextureRequest(path, width, height, limitSingleDimension))
     {
       image->AddRef();
       return; // already queued
@@ -233,9 +308,10 @@ void CGUILargeTextureManager::QueueImage(const std::string &path, bool useCache)
   }
 
   // queue the item
-  CLargeTexture *image = new CLargeTexture(path);
-  unsigned int jobID = CServiceBroker::GetJobManager()->AddJob(new CImageLoader(path, useCache),
-                                                               this, CJob::PRIORITY_NORMAL);
+  CLargeTexture* image = new CLargeTexture(path, width, height, limitSingleDimension);
+  unsigned int jobID = CServiceBroker::GetJobManager()->AddJob(
+      new CImageLoader(path, useCache, height, width, limitSingleDimension), this,
+      CJob::PRIORITY_NORMAL);
   m_queued.emplace_back(jobID, image);
 }
 

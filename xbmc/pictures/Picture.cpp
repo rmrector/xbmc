@@ -112,6 +112,83 @@ bool CThumbnailWriter::DoWork()
   return success;
 }
 
+std::unique_ptr<CTexture> CPicture::ResizeTextureDown(std::unique_ptr<CTexture> source,
+                                                      unsigned int requested_width,
+                                                      unsigned int requested_height,
+                                                      bool limitSingleDimension)
+{
+  if (!source)
+    return {};
+
+  unsigned int source_width = source->GetWidth();
+  unsigned int source_height = source->GetHeight();
+  unsigned int dest_width = std::min(source_width, requested_width);
+  unsigned int dest_height = std::min(source_height, requested_height);
+
+  // if no max width or height is specified, don't resize
+  if (dest_width == 0 && dest_height == 0)
+  {
+    dest_width = source_width;
+    dest_height = source_height;
+  }
+  else if (dest_width == 0)
+  {
+    double factor = (double)dest_height / (double)source_height;
+    dest_width = (uint32_t)(source_width * factor);
+  }
+  else if (dest_height == 0)
+  {
+    double factor = (double)dest_width / (double)source_width;
+    dest_height = (uint32_t)(source_height * factor);
+  }
+
+  if (limitSingleDimension)
+    GetScaleWide(source_width, source_height, dest_width, dest_height);
+  else
+    GetScale(source_width, source_height, dest_width, dest_height);
+
+  // nothing special to do if the dimensions already match
+  if (dest_width >= source_width || dest_height >= source_height)
+    return source;
+
+  std::unique_ptr<CTexture> result;
+  while (dest_width < source_width && dest_height < source_height)
+  {
+    if (result)
+    {
+      source = std::move(result);
+      source_width = source->GetWidth();
+      source_height = source->GetHeight();
+    }
+    unsigned int step_width = source_width / 2;
+    unsigned int step_height = source_height / 2;
+    const bool doStep = dest_width <= step_width && dest_height <= step_height;
+    if (!doStep)
+    {
+      step_width = dest_width;
+      step_height = dest_height;
+    }
+
+    const auto scaling = doStep ? CServiceBroker::GetSettingsComponent()
+                                      ->GetAdvancedSettings()
+                                      ->m_imageStepScalingAlgorithm
+                                : CServiceBroker::GetSettingsComponent()
+                                      ->GetAdvancedSettings()
+                                      ->m_imageScalingAlgorithm;
+
+    result = CTexture::CreateTexture(step_width, step_height);
+    result->SetAlpha(source->HasAlpha());
+
+    if (!ScaleImage(source->GetPixels(), source_width, source_height, source->GetPitch(),
+                    AV_PIX_FMT_BGRA, result->GetPixels(), step_width, step_height,
+                    result->GetPitch(), AV_PIX_FMT_BGRA, scaling))
+    {
+      return {};
+    }
+  }
+  return result;
+}
+
 bool CPicture::ResizeTexture(const std::string& image,
                              CTexture* texture,
                              uint32_t& dest_width,
@@ -124,8 +201,8 @@ bool CPicture::ResizeTexture(const std::string& image,
   if (image.empty() || texture == NULL)
     return false;
 
-  return ResizeTexture(image, texture->GetPixels(), texture->GetWidth(), texture->GetHeight(), texture->GetPitch(),
-                       dest_width, dest_height, result, result_size,
+  return ResizeTexture(image, texture->GetPixels(), texture->GetWidth(), texture->GetHeight(),
+                       texture->GetPitch(), dest_width, dest_height, result, result_size,
                        scalingAlgorithm);
 }
 
@@ -337,6 +414,18 @@ void CPicture::GetScale(unsigned int width, unsigned int height, unsigned int &o
 {
   float aspect = (float)width / height;
   if ((unsigned int)(out_width / aspect + 0.5f) > out_height)
+    out_width = (unsigned int)(out_height * aspect + 0.5f);
+  else
+    out_height = (unsigned int)(out_width / aspect + 0.5f);
+}
+
+void CPicture::GetScaleWide(unsigned int width,
+                            unsigned int height,
+                            unsigned int& out_width,
+                            unsigned int& out_height)
+{
+  float aspect = (float)width / height;
+  if ((unsigned int)(out_width / aspect + 0.5f) < out_height)
     out_width = (unsigned int)(out_height * aspect + 0.5f);
   else
     out_height = (unsigned int)(out_width / aspect + 0.5f);
